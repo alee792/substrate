@@ -588,9 +588,10 @@ const credentialProviderUsage = `{"name":"k8s.io"} for the bundled Kubernetes Se
 // credentialProviderSpec is the schema of the --credential-provider JSON.
 type credentialProviderSpec struct {
 	// Enabled defaults to true when absent.
-	Enabled *bool  `json:"enabled"`
-	Name    string `json:"name"`
-	Address string `json:"address"`
+	Enabled          *bool    `json:"enabled"`
+	Name             string   `json:"name"`
+	Address          string   `json:"address"`
+	SecretNamespaces []string `json:"secretNamespaces"`
 }
 
 // CredentialProvider is the credential provider the egress gateway is pointed
@@ -601,6 +602,9 @@ type CredentialProvider struct {
 	Name string
 	// Address is the host:port the gateway dials the provider at.
 	Address string
+	// SecretNamespaces are the namespaces the bundled provider may read
+	// Secrets in. Empty means every namespace.
+	SecretNamespaces []string
 }
 
 // Enabled reports whether the gateway is given a provider.
@@ -642,8 +646,8 @@ func credentialProvider(raw string) (CredentialProvider, error) {
 	}
 
 	if spec.Enabled != nil && !*spec.Enabled {
-		if spec.Name != "" || spec.Address != "" {
-			return invalid("enabled false takes no name or address")
+		if spec.Name != "" || spec.Address != "" || spec.SecretNamespaces != nil {
+			return invalid("enabled false takes no name, address or secretNamespaces")
 		}
 		return CredentialProvider{}, nil
 	}
@@ -662,7 +666,23 @@ func credentialProvider(raw string) (CredentialProvider, error) {
 	} else if host, port, err := net.SplitHostPort(spec.Address); err != nil || host == "" || port == "" {
 		return invalid("address must be host:port, got %q", spec.Address)
 	}
-	return CredentialProvider{Name: spec.Name, Address: spec.Address}, nil
+	if spec.SecretNamespaces != nil {
+		if spec.Name != K8sCredentialProviderName {
+			return invalid("secretNamespaces applies only to the bundled %s provider", K8sCredentialProviderName)
+		}
+		if len(spec.SecretNamespaces) == 0 {
+			return invalid("secretNamespaces is empty; omit it to allow every namespace")
+		}
+		for i, ns := range spec.SecretNamespaces {
+			if errs := validation.IsDNS1123Label(ns); len(errs) > 0 {
+				return invalid("secretNamespaces entry %q is not a valid namespace: %s", ns, strings.Join(errs, "; "))
+			}
+			if slices.Contains(spec.SecretNamespaces[:i], ns) {
+				return invalid("secretNamespaces lists %q twice", ns)
+			}
+		}
+	}
+	return CredentialProvider{Name: spec.Name, Address: spec.Address, SecretNamespaces: spec.SecretNamespaces}, nil
 }
 
 // CredentialProviders parses --credential-provider, which is one of:

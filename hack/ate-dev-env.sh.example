@@ -38,7 +38,9 @@ export KO_DOCKER_REPO="${KO_DOCKER_REPO:-localhost:${KIND_REGISTRY_PORT}}"
 
 # Credential provider the egress gateway injects credentials from, as JSON; the
 # install requires a choice. {"name":"k8s.io"} deploys the bundled Kubernetes
-# Secrets provider, with a NetworkPolicy that admits only the egress gateway;
+# Secrets provider, with a NetworkPolicy that admits only the egress gateway,
+# and {"name":"k8s.io","secretNamespaces":["<ns>"]} limits its Secret reads to
+# those namespaces;
 # {"enabled":false} turns egress credential injection off, and is the only choice
 # on the agentgateway dataplane; {"name":"<provider>","address":"<host>:<port>"}
 # uses a provider you deploy yourself. See docs/guides/egress-credential-injection.md.

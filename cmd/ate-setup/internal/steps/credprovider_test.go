@@ -15,9 +15,15 @@
 package steps
 
 import (
+	"slices"
 	"testing"
 
+	rbacv1 "k8s.io/api/rbac/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/client-go/kubernetes/fake"
 
 	"go.ate.dev/substrate/cmd/ate-setup/internal/config"
 	"go.ate.dev/substrate/cmd/ate-setup/internal/kube"
@@ -135,6 +141,121 @@ func TestK8sCredentialProviderNetworkPolicy(t *testing.T) {
 	port := ports[0].(map[string]any)
 	if n, ok := asInt(port["port"]); port["protocol"] != "TCP" || !ok || n != want {
 		t.Errorf("networkpolicy admits %v/%v, want TCP/%d", port["protocol"], port["port"], want)
+	}
+}
+
+// Listing secretNamespaces swaps the cluster-wide binding for one RoleBinding
+// per namespace that grants the same ClusterRole to the same subject.
+func TestK8sCredentialProviderObjects(t *testing.T) {
+	e := &Env{Cfg: &config.Config{Root: repoRoot(t)}}
+	objs, err := kube.LoadPath(e.k8sCredentialProviderPath(k8sCredentialProviderManifest))
+	if err != nil {
+		t.Fatalf("loading the provider manifest: %v", err)
+	}
+	crb := findObject(objs, "ClusterRoleBinding", k8sCredentialProviderSecretReader)
+	if crb == nil {
+		t.Fatalf("provider manifest has no clusterrolebinding/%s", k8sCredentialProviderSecretReader)
+	}
+	wantRoleRef, _, _ := unstructured.NestedMap(crb.Object, "roleRef")
+	wantSubjects, _, _ := unstructured.NestedSlice(crb.Object, "subjects")
+
+	for _, tc := range []struct {
+		name       string
+		namespaces []string
+	}{
+		{name: "cluster-wide"},
+		{name: "one namespace", namespaces: []string{"team-a"}},
+		{name: "two namespaces", namespaces: []string{"team-a", "team-b"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := k8sCredentialProviderObjects(objs, tc.namespaces)
+			if err != nil {
+				t.Fatalf("k8sCredentialProviderObjects() error = %v", err)
+			}
+			if findObject(got, "ClusterRole", k8sCredentialProviderSecretReader) == nil {
+				t.Errorf("clusterrole/%s is missing", k8sCredentialProviderSecretReader)
+			}
+			if gotCRB := findObject(got, "ClusterRoleBinding", k8sCredentialProviderSecretReader) != nil; gotCRB != (len(tc.namespaces) == 0) {
+				t.Errorf("clusterrolebinding present = %v, want %v", gotCRB, len(tc.namespaces) == 0)
+			}
+			var bound []string
+			for _, obj := range got {
+				if obj.GetKind() != "RoleBinding" {
+					continue
+				}
+				bound = append(bound, obj.GetNamespace())
+				if obj.GetName() != k8sCredentialProviderSecretReader {
+					t.Errorf("rolebinding in %s is named %q, want %q", obj.GetNamespace(), obj.GetName(), k8sCredentialProviderSecretReader)
+				}
+				sel, err := labels.Parse(k8sCredentialProviderSecretReaderSelector)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !sel.Matches(labels.Set(obj.GetLabels())) {
+					t.Errorf("rolebinding in %s has labels %v, which the prune selector %q misses", obj.GetNamespace(), obj.GetLabels(), k8sCredentialProviderSecretReaderSelector)
+				}
+				roleRef, _, _ := unstructured.NestedMap(obj.Object, "roleRef")
+				subjects, _, _ := unstructured.NestedSlice(obj.Object, "subjects")
+				if !equality.Semantic.DeepEqual(roleRef, wantRoleRef) || !equality.Semantic.DeepEqual(subjects, wantSubjects) {
+					t.Errorf("rolebinding in %s grants %v to %v, want %v to %v", obj.GetNamespace(), roleRef, subjects, wantRoleRef, wantSubjects)
+				}
+			}
+			if !slices.Equal(bound, tc.namespaces) {
+				t.Errorf("rolebindings in %v, want %v", bound, tc.namespaces)
+			}
+		})
+	}
+}
+
+// Pruning deletes only the provider's own RoleBindings, and only in the
+// namespaces it no longer lists.
+func TestPruneK8sCredentialProviderRoleBindings(t *testing.T) {
+	rb := func(ns, name string, labeled bool) *rbacv1.RoleBinding {
+		b := &rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name}}
+		if labeled {
+			b.Labels = map[string]string{"app": k8sCredentialProviderDeployment}
+		}
+		return b
+	}
+	for _, tc := range []struct {
+		name string
+		keep []string
+		want []string
+	}{
+		{
+			name: "keeps listed namespaces",
+			keep: []string{"team-a"},
+			want: []string{"other/" + k8sCredentialProviderSecretReader, "team-a/" + k8sCredentialProviderSecretReader, "team-a/unrelated"},
+		},
+		{
+			name: "removes every one when none is listed",
+			want: []string{"other/" + k8sCredentialProviderSecretReader, "team-a/unrelated"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			kc := fake.NewClientset(
+				rb("team-a", k8sCredentialProviderSecretReader, true),
+				rb("team-b", k8sCredentialProviderSecretReader, true),
+				rb("team-a", "unrelated", true),
+				rb("other", k8sCredentialProviderSecretReader, false),
+			)
+			e := &Env{Kube: &kube.Client{Typed: kc}}
+			if err := e.pruneK8sCredentialProviderRoleBindings(t.Context(), tc.keep); err != nil {
+				t.Fatalf("pruneK8sCredentialProviderRoleBindings() error = %v", err)
+			}
+			list, err := kc.RbacV1().RoleBindings(metav1.NamespaceAll).List(t.Context(), metav1.ListOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			for _, b := range list.Items {
+				got = append(got, b.Namespace+"/"+b.Name)
+			}
+			slices.Sort(got)
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("rolebindings left = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
