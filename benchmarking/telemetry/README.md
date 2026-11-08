@@ -46,8 +46,8 @@ go run ./cmd/ate-setup deploy ate-system \
 
 `--otlp-endpoint` patches the `ate-otel-config` ConfigMap and restarts the
 workloads that read it. One patch is sufficient for `ateapi`, `ate-controller`,
-`atelet`, `atenet-router`, and `atenet-egress`, because each one reads the
-ConfigMap through `envFrom`. `ate-controller` also copies the values to the
+`atelet`, `atenet-router`, `atenet-egress`, and `k8s-credential-provider`,
+because each one reads the ConfigMap through `envFrom`. `ate-controller` also copies the values to the
 worker pods that it creates.
 
 The actor containers are different. Substrate puts no OTLP configuration in
