@@ -38,13 +38,13 @@ import (
 // part of every rendered bundle: which of them the install created depends on
 // the router, credential provider, and data plane that were selected, and
 // teardown must not depend on remembering that. The provider goes first so
-// that a later failure cannot leave its ClusterRole and binding behind. The
+// that a later failure cannot leave its ClusterRole and bindings behind. The
 // cluster-scoped trust bundles go last, once the controllers that publish
 // them are gone.
 func (e *Env) DeleteAteSystem(ctx context.Context) error {
 	log.Step("delete_ate_system")
 
-	if err := e.Kube.DeletePath(ctx, e.k8sCredentialProviderPath(k8sCredentialProviderManifest)); err != nil {
+	if err := e.deleteK8sCredentialProvider(ctx); err != nil {
 		return err
 	}
 
@@ -178,12 +178,12 @@ func (e *Env) DeleteTrustBundles(ctx context.Context) error {
 
 // DeleteAtenet removes the atenet dataplane and the bundled credential
 // provider, deleting the provider first so that a later failure cannot leave
-// its ClusterRole and binding behind. The provider's policy ConfigMap stays:
+// its ClusterRole and bindings behind. The provider's policy ConfigMap stays:
 // it holds the operator's allow-list.
 func (e *Env) DeleteAtenet(ctx context.Context) error {
 	log.Step("delete_atenet")
 
-	if err := e.Kube.DeletePath(ctx, e.k8sCredentialProviderPath(k8sCredentialProviderManifest)); err != nil {
+	if err := e.deleteK8sCredentialProvider(ctx); err != nil {
 		return err
 	}
 

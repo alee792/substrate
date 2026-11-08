@@ -136,15 +136,6 @@ func (e *Env) renderResolve(ctx context.Context, path string) ([]byte, error) {
 	return e.ResolveManifestBytes(ctx, manifest)
 }
 
-// renderResolveApply renders path, resolves its images, and applies the result.
-func (e *Env) renderResolveApply(ctx context.Context, path string) error {
-	manifest, err := e.renderResolve(ctx, path)
-	if err != nil {
-		return err
-	}
-	return e.Kube.ApplyBytes(ctx, manifest)
-}
-
 // renderSystemManifests produces the full control plane manifest with all
 // image references resolved.
 func (e *Env) renderSystemManifests(ctx context.Context) ([]byte, error) {

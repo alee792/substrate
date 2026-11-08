@@ -176,8 +176,8 @@ func (e *Env) DeployAteSystem(ctx context.Context, opts DeployOptions) error {
 	}
 	// After the podcertificate controller: the provider serves with a
 	// projected pod certificate.
-	if config.HasKubernetesProvider(providers) {
-		err = e.deployK8sCredentialProvider(ctx)
+	if i := slices.IndexFunc(providers, config.CredentialProvider.Kubernetes); i >= 0 {
+		err = e.deployK8sCredentialProvider(ctx, providers[i])
 	} else {
 		err = e.removeK8sCredentialProvider(ctx)
 	}
@@ -579,8 +579,8 @@ func (e *Env) DeployAtenet(ctx context.Context) error {
 	if err := e.EnsureEgressMITMCAPoolSecret(ctx); err != nil {
 		return err
 	}
-	if config.HasKubernetesProvider(providers) {
-		err = e.deployK8sCredentialProvider(ctx)
+	if i := slices.IndexFunc(providers, config.CredentialProvider.Kubernetes); i >= 0 {
+		err = e.deployK8sCredentialProvider(ctx, providers[i])
 	} else {
 		err = e.removeK8sCredentialProvider(ctx)
 	}

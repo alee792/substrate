@@ -202,6 +202,7 @@ var Registry = []Setting{
 		Flag: "credential-provider", Kind: KindString,
 		Usage: "Credential provider the egress gateway injects credentials from, as JSON; " +
 			"required by deploy ate-system and deploy atenet. " + credentialProviderUsage +
+			`. {"name":"k8s.io","secretNamespaces":[...]} limits the bundled provider's Secret reads to those namespaces` +
 			". A provider requires --atenet-dataplane=envoy",
 	},
 	{

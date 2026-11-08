@@ -211,11 +211,13 @@ select several providers; any other key is an error:
 | `enabled` | Defaults to `true`. `false` turns injection off, and then no other key is allowed. An array entry can't be `false` |
 | `name` | Required unless `enabled` is `false`. A DNS name: `k8s.io` for the bundled Kubernetes Secrets provider, or the name of a provider you deploy, which is the host of the `ate-secret://` URIs it serves, e.g. `vault.example.com` for `ate-secret://vault.example.com/...`. Names in an array must differ. A policy URI naming no configured provider fails closed |
 | `address` | The `host:port` the gateway dials the provider at. Required for a provider you deploy; optional with `k8s.io`, where it defaults to the bundled provider's Service, `k8s-credential-provider.ate-system.svc:50051` |
+| `secretNamespaces` | `k8s.io` only. The namespaces the bundled provider may read Secrets in, e.g. `["team-a-creds"]`. Absent, it may read them in every namespace. Each listed namespace must exist |
 
 For example:
 
 ```bash
 --credential-provider='{"name":"k8s.io"}'
+--credential-provider='{"name":"k8s.io","secretNamespaces":["team-a-creds"]}'
 --credential-provider='{"enabled":false}'
 --credential-provider='{"name":"vault.example.com","address":"vault-provider.ate-system.svc:50051"}'
 --credential-provider='[{"name":"k8s.io"},{"name":"vault.example.com","address":"vault-provider.ate-system.svc:50051"}]'
@@ -227,8 +229,10 @@ it alongside the gateway. The install applies:
 
 * the provider's ServiceAccount, its Deployment and its Service in
   `ate-system`;
-* a ClusterRole and ClusterRoleBinding that let it read Secrets in every
-  namespace;
+* a ClusterRole that lets it read Secrets, with a ClusterRoleBinding that
+  covers every namespace, or a RoleBinding in each of `secretNamespaces` when
+  that is set.
+  A redeploy deletes the bindings the current setting no longer needs;
 * the `k8s-credential-provider-namespace-policy` ConfigMap, only when it is
   absent (see below); and
 * a NetworkPolicy that admits only the egress gateway's pods
@@ -313,10 +317,13 @@ name. An actor that is deleted and recreated under the same name can get its
 predecessor's token until that token's refresh point, up to two thirds of its
 lifetime, and that token's UID claim names the old actor.
 
-**Scope of the reference provider's RBAC.** The sample deployment grants read
-on Secrets cluster-wide so the policy may name any namespace; a production
-deployment should scope this to the namespaces the provider is allowed to
-serve (see the note in `k8s-credential-provider.yaml`).
+**Scope of the reference provider's RBAC.** Without `secretNamespaces` the
+provider may read Secrets in every namespace, so the namespace policy may name
+any of them. Set `secretNamespaces` to the namespaces the policy names, so a
+compromised provider can't read the rest. Kubernetes refuses a read outside
+`secretNamespaces`, and the provider returns `PermissionDenied`. The namespace
+policy can change without a redeploy, but `secretNamespaces` can't, so add a
+namespace to `secretNamespaces` and redeploy before the policy names it.
 
 ## For credential provider developers
 

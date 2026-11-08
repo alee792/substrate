@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/spf13/pflag"
 
 	"go.ate.dev/substrate/cmd/ate-setup/internal/images"
@@ -1063,6 +1064,11 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		{"provider array entry disabled", Options{CredentialProvider: `[{"enabled":false}]`}},
 		{"provider array with a repeated name", Options{CredentialProvider: `[{"name":"k8s.io"},{"name":"k8s.io"}]`}},
 		{"provider array entry without an address", Options{CredentialProvider: `[{"name":"k8s.io"},{"name":"vault.example.com"}]`}},
+		{"secret namespaces on another provider", Options{CredentialProvider: `{"name":"vault.example.com","address":"vault.ate-system.svc:50051","secretNamespaces":["team-a"]}`}},
+		{"secret namespaces when disabled", Options{CredentialProvider: `{"enabled":false,"secretNamespaces":["team-a"]}`}},
+		{"secret namespaces empty", Options{CredentialProvider: `{"name":"k8s.io","secretNamespaces":[]}`}},
+		{"secret namespace not a label", Options{CredentialProvider: `{"name":"k8s.io","secretNamespaces":["Team_A"]}`}},
+		{"secret namespace twice", Options{CredentialProvider: `{"name":"k8s.io","secretNamespaces":["team-a","team-a"]}`}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := Load(tc.opts); err == nil {
@@ -1113,6 +1119,11 @@ func TestCredentialProvider(t *testing.T) {
 			want: CredentialProvider{Name: K8sCredentialProviderName, Address: "secrets.ate-system.svc:443"},
 		},
 		{
+			name: "kubernetes limited to secret namespaces",
+			opts: Options{CredentialProvider: `{"name":"k8s.io","secretNamespaces":["team-a","team-b"]}`},
+			want: CredentialProvider{Name: K8sCredentialProviderName, Address: K8sCredentialProviderAddress, SecretNamespaces: []string{"team-a", "team-b"}},
+		},
+		{
 			name: "another provider",
 			opts: Options{CredentialProvider: `{"name":"vault.example.com","address":"vault.ate-system.svc:50051"}`},
 			want: CredentialProvider{Name: "vault.example.com", Address: "vault.ate-system.svc:50051"},
@@ -1155,8 +1166,8 @@ func TestCredentialProvider(t *testing.T) {
 			if tc.want.Enabled() {
 				want = []CredentialProvider{tc.want}
 			}
-			if !slices.Equal(got, want) {
-				t.Errorf("CredentialProviders() = %+v, want %+v", got, want)
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("CredentialProviders() mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
@@ -1177,6 +1188,15 @@ func TestCredentialProvidersArray(t *testing.T) {
 			raw:  `[{"name":"k8s.io"},{"name":"sts.example.com","address":"sts.ate-system.svc:50051"}]`,
 			want: []CredentialProvider{k8s, {Name: "sts.example.com", Address: "sts.ate-system.svc:50051"}},
 		},
+		{
+			name: "secret namespaces in an array",
+			raw:  `[{"name":"k8s.io","secretNamespaces":["team-a"]},{"name":"sts.example.com","address":"sts.ate-system.svc:50051"}]`,
+			want: []CredentialProvider{
+				{Name: K8sCredentialProviderName, Address: K8sCredentialProviderAddress, SecretNamespaces: []string{"team-a"}},
+				{Name: "sts.example.com", Address: "sts.ate-system.svc:50051"},
+			},
+		},
+		{name: "secret namespaces null", raw: `[{"name":"k8s.io","secretNamespaces":null}]`, want: []CredentialProvider{k8s}},
 		{name: "a null entry", raw: `[null]`, wantErr: "array entries must be JSON objects"},
 		{name: "a string entry", raw: `["k8s.io"]`, wantErr: "array entries must be JSON objects"},
 	} {
@@ -1195,8 +1215,8 @@ func TestCredentialProvidersArray(t *testing.T) {
 			if err != nil {
 				t.Fatalf("CredentialProviders() error = %v", err)
 			}
-			if !slices.Equal(got, tc.want) {
-				t.Errorf("CredentialProviders() = %+v, want %+v", got, tc.want)
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Errorf("CredentialProviders() mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
